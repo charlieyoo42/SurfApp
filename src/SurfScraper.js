@@ -2,8 +2,20 @@ const path = require("path");
 const Database = require("better-sqlite3");
 
 const DB_PATH = path.join(__dirname, "surf_data.db");
-const targetUrl = "https://www.ndbc.noaa.gov/data/realtime2/46267.txt";
-const STATION = targetUrl.match(/(\d{5})\.txt/)?.[1] ?? "unknown";
+
+const TARGET_URLS = [
+    "https://www.ndbc.noaa.gov/data/realtime2/46211.txt",
+    // add more realtime2 station URLs here
+];
+
+// Optional human-readable names, keyed by station id. Falls back to the id.
+const STATION_NAMES = {
+    "46211": "Grays Harbor, WA",
+};
+
+function parseStationId(url) {
+    return url.match(/([A-Za-z0-9]{5})\.txt/)?.[1] ?? "unknown";
+}
 
 // NDBC realtime2 columns after year/month/day/hour/minute
 const FIELDS = [
@@ -28,23 +40,44 @@ function initDb() {
     db.pragma("journal_mode = WAL");
 
     const columns = FIELDS.map(f => `${f} REAL`).join(", ");
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS ndbc_readings (
+    const createSql = (name) => `
+        CREATE TABLE ${name} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            station_id TEXT NOT NULL,
             station TEXT NOT NULL,
             reading_time TEXT NOT NULL,
             ${columns},
             fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE (station, reading_time)
+            UNIQUE (station_id, reading_time)
         );
-    `);
+    `;
+
+    const existing = db.prepare("PRAGMA table_info(ndbc_readings)").all();
+    if (existing.length === 0) {
+        db.exec(createSql("ndbc_readings"));
+    } else if (!existing.some(c => c.name === "station_id")) {
+        // Migrate old schema, where `station` held the station id
+        const cols = ["station_id", "station", "reading_time", ...FIELDS, "fetched_at"].join(", ");
+        db.transaction(() => {
+            db.exec(createSql("ndbc_readings_new"));
+            db.exec(`
+                INSERT INTO ndbc_readings_new (${cols})
+                SELECT station, station, reading_time, ${FIELDS.join(", ")}, fetched_at
+                FROM ndbc_readings;
+            `);
+            db.exec("DROP TABLE ndbc_readings");
+            db.exec("ALTER TABLE ndbc_readings_new RENAME TO ndbc_readings");
+        })();
+        const setName = db.prepare("UPDATE ndbc_readings SET station = ? WHERE station_id = ?");
+        for (const [id, name] of Object.entries(STATION_NAMES)) setName.run(name, id);
+    }
 
     return db;
 }
 
 // Parse the raw NDBC text into row objects.
 // Format: YYYY MM DD HH MM <14 measurement columns>, "MM" = missing.
-function parseNdbcData(raw) {
+function parseNdbcData(raw, stationId) {
     const rows = [];
     for (const line of raw.split("\n")) {
         if (line.trimStart().startsWith("#") || !line.trim()) continue;
@@ -57,7 +90,8 @@ function parseNdbcData(raw) {
         if (!parts.slice(0, 5).every(p => /^\d+$/.test(p))) continue;
 
         const row = {
-            station: STATION,
+            station_id: stationId,
+            station: STATION_NAMES[stationId] ?? stationId,
             reading_time: `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")} ${hour.padStart(2, "0")}:${minute.padStart(2, "0")}:00`
         };
 
@@ -73,7 +107,7 @@ function parseNdbcData(raw) {
 function saveNewRows(db, rows) {
     if (rows.length === 0) return 0;
 
-    const columns = ["station", "reading_time", ...FIELDS];
+    const columns = ["station_id", "station", "reading_time", ...FIELDS];
     const placeholders = columns.map(() => "?").join(", ");
     const insert = db.prepare(`
         INSERT OR IGNORE INTO ndbc_readings (${columns.join(", ")}) VALUES (${placeholders});
@@ -112,14 +146,17 @@ async function fetchNDBCData(url) {
 async function main() {
     const db = initDb();
     try {
-        const raw = await fetchNDBCData(targetUrl);
-        if (!raw) return;
+        for (const url of TARGET_URLS) {
+            const stationId = parseStationId(url);
+            const raw = await fetchNDBCData(url);
+            if (!raw) continue; // already logged; carry on with the other stations
 
-        const rows = parseNdbcData(raw);
-        console.log(`Parsed ${rows.length} readings.`);
+            const rows = parseNdbcData(raw, stationId);
+            console.log(`[${stationId}] Parsed ${rows.length} readings.`);
 
-        const inserted = saveNewRows(db, rows);
-        console.log(`Inserted ${inserted} new readings into ${DB_PATH}.`);
+            const inserted = saveNewRows(db, rows);
+            console.log(`[${stationId}] Inserted ${inserted} new readings into ${DB_PATH}.`);
+        }
 
         const total = db.prepare("SELECT COUNT(*) AS n FROM ndbc_readings").get().n;
         console.log(`Total readings in database: ${total}`);
