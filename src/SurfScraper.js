@@ -1,5 +1,6 @@
 const path = require("path");
 const Database = require("better-sqlite3");
+const cron = require("node-cron");
 
 const DB_PATH = path.join(__dirname, "surf_data.db");
 
@@ -165,4 +166,21 @@ async function main() {
     }
 }
 
-main().catch(error => console.error("Unhandled error:", error));
+// Run every 15 minutes, on the quarter hour (1:00, 1:15, 1:30, 1:45, ...)
+const CRON_SCHEDULE = "*/15 * * * *";
+
+let running = false;
+async function runScrape() {
+    if (running) return; // skip if the previous run hasn't finished
+    running = true;
+    try {
+        await main();
+    } catch (error) {
+        console.error("Unhandled error:", error);
+    } finally {
+        running = false;
+    }
+}
+
+cron.schedule(CRON_SCHEDULE, runScrape);
+console.log(`Scraper scheduled (${CRON_SCHEDULE}). Waiting for next run...`);
