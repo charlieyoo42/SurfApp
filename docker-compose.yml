@@ -1,0 +1,9 @@
+services:
+  surf-scraper:
+    build: .
+    container_name: surf-scraper
+    restart: unless-stopped
+    environment:
+      - TZ=America/Los_Angeles
+    volumes:
+      - ./data:/data

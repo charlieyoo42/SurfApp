@@ -2,7 +2,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const cron = require("node-cron");
 
-const DB_PATH = path.join(__dirname, "surf_data.db");
+const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, "surf_data.db");
 
 const TARGET_URLS = [
     "https://www.ndbc.noaa.gov/data/realtime2/46211.txt",
