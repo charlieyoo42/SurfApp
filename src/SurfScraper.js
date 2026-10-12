@@ -6,13 +6,17 @@ const DB_PATH = path.join(__dirname, "surf_data.db");
 
 const TARGET_URLS = [
     "https://www.ndbc.noaa.gov/data/realtime2/46211.txt",
+    "https://www.ndbc.noaa.gov/data/realtime2/46267.txt",
     // add more realtime2 station URLs here
 ];
 
 // Optional human-readable names, keyed by station id. Falls back to the id.
 const STATION_NAMES = {
     "46211": "Grays Harbor, WA",
+    "46267": "Angeles Point, WA",
 };
+
+const METERS_TO_FEET = 3.28084;
 
 function parseStationId(url) {
     return url.match(/([A-Za-z0-9]{5})\.txt/)?.[1] ?? "unknown";
@@ -23,7 +27,7 @@ const FIELDS = [
     "wind_direction",   // degT
     "wind_speed",       // m/s
     "gust",             // m/s
-    "wave_height",      // m
+    "wave_height",      // ft (converted from m)
     "wave_period_dpd",  // s (dominant)
     "wave_period_apd",  // s (auxiliary)
     "mean_wind_direction", // degT
@@ -73,14 +77,38 @@ function initDb() {
         for (const [id, name] of Object.entries(STATION_NAMES)) setName.run(name, id);
     }
 
+    // Ensure the `station` (name) column exists, backfilling from station_id
+    if (!db.prepare("PRAGMA table_info(ndbc_readings)").all().some(c => c.name === "station")) {
+        db.transaction(() => {
+            db.exec("ALTER TABLE ndbc_readings ADD COLUMN station TEXT NOT NULL DEFAULT ''");
+            db.exec("UPDATE ndbc_readings SET station = station_id");
+            const setName = db.prepare("UPDATE ndbc_readings SET station = ? WHERE station_id = ?");
+            for (const [id, name] of Object.entries(STATION_NAMES)) setName.run(name, id);
+        })();
+    }
+
+    // One-time conversion of wave_height stored in meters by earlier versions
+    if (db.pragma("user_version", { simple: true }) < 1) {
+        db.transaction(() => {
+            db.exec(`UPDATE ndbc_readings SET wave_height = wave_height * ${METERS_TO_FEET}`);
+            db.pragma("user_version = 1");
+        })();
+    }
+
     return db;
 }
 
 // Parse the raw NDBC text into row objects.
 // Format: YYYY MM DD HH MM <14 measurement columns>, "MM" = missing.
+// Columns whose unit (from the file's "#yr mo ..." header row) is meters are converted to feet.
 function parseNdbcData(raw, stationId) {
     const rows = [];
+    let units = [];
     for (const line of raw.split("\n")) {
+        if (/^#\s*yr\b/i.test(line)) {
+            units = line.trim().split(/\s+/).slice(5); // skip "#yr mo dy hr mn"
+            continue;
+        }
         if (line.trimStart().startsWith("#") || !line.trim()) continue;
 
         const parts = line.trim().split(/\s+/);
@@ -97,7 +125,9 @@ function parseNdbcData(raw, stationId) {
         };
 
         parts.slice(5).forEach((value, i) => {
-            row[FIELDS[i]] = value === "MM" ? null : parseFloat(value); // MM = missing
+            let num = value === "MM" ? null : parseFloat(value); // MM = missing
+            if (num !== null && units[i] === "m") num = Math.round(num * METERS_TO_FEET * 100) / 100;
+            row[FIELDS[i]] = num;
         });
         rows.push(row);
     }
