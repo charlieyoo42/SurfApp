@@ -196,8 +196,8 @@ async function main() {
     }
 }
 
-// Run every 15 minutes, on the quarter hour (1:00, 1:15, 1:30, 1:45, ...)
-const CRON_SCHEDULE = "*/15 * * * *";
+// Run at minute 5 of every hour (1:05, 2:05, 3:05, ...)
+const CRON_SCHEDULE = "5 * * * *";
 
 let running = false;
 async function runScrape() {
