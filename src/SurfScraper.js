@@ -197,7 +197,7 @@ async function main() {
 }
 
 // Run at minute 5 of every hour (1:05, 2:05, 3:05, ...)
-const CRON_SCHEDULE = "* * * * *";
+const CRON_SCHEDULE = "5 * * * *";
 
 let running = false;
 async function runScrape() {
