@@ -6,14 +6,16 @@ const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, "surf_data.db");
 
 const TARGET_URLS = [
     "https://www.ndbc.noaa.gov/data/realtime2/46211.txt",
-    "https://www.ndbc.noaa.gov/data/realtime2/46267.txt"
+    "https://www.ndbc.noaa.gov/data/realtime2/46267.txt",
+    "https://www.ndbc.noaa.gov/data/realtime2/46005.txt"
     // add more realtime2 station URLs here
 ];
 
 // Optional human-readable names, keyed by station id. Falls back to the id.
 const STATION_NAMES = {
     "46211": "Grays Harbor, WA",
-    "46267": "Angeles Point, WA"
+    "46267": "Angeles Point, WA",
+    "46005": "Aberdeen, WA"
 };
 
 const METERS_TO_FEET = 3.28084;
